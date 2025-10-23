@@ -42,4 +42,5 @@ dist/
 .env
 .env.local
 .venv 
-
+CLAUDE.md
+GEMINI.md

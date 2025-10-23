@@ -9,6 +9,8 @@ import useChatScroll from '../hooks/useChatScroll';
 interface MessageListProps {
     messages: ChatMessage[];
     isLoading?: boolean;
+    onLoadMore?: () => void;
+    hasMore?: boolean;
     }
 
 /**
@@ -17,12 +19,20 @@ interface MessageListProps {
  * 
  * @component
  */
-const MessageList: React.FC<MessageListProps> = ({ messages, isLoading = false }) => {
+const MessageList: React.FC<MessageListProps> = ({ messages, isLoading = false, onLoadMore, hasMore }) => {
     const scrollRef = useChatScroll(messages);
+
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        if (e.currentTarget.scrollTop === 0 && hasMore && onLoadMore) {
+            onLoadMore();
+        }
+    };
+
     
     return (
         <Box
             ref={scrollRef}
+            onScroll={handleScroll}
             sx={{
                 flexGrow: 1,
                 overflowY: 'auto',

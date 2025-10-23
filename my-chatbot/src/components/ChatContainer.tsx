@@ -1,6 +1,7 @@
 // src/components/ChatContainer.tsx
-import { useState } from 'react';
-import { Box, Typography, Alert, Snackbar, Button } from '@mui/material';
+import { useState, useEffect } from 'react';
+import { Box, Typography, Alert, Snackbar, IconButton } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import { ChatMessage, ApiError } from '../types/chat';
@@ -16,6 +17,7 @@ import logo from '../assets/Logo WO Background.png'; // or logo.svg, or whatever
 const ChatContainer: React.FC = () => {
   // State for storing all messages
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
   
   // State for loading indicator
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -23,62 +25,86 @@ const ChatContainer: React.FC = () => {
   // State for error handling
   const [error, setError] = useState<string | null>(null);
 
-  // New sate for managing conversations
+  // New state for managing conversations
   const [conversations, setConversations] = useState<Array<{
-     id: string; 
-     name: string; 
+     id: string;
+     name: string;
      messages: ChatMessage[];
      timestamp: Date;
   }>>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  
-  /**
-   * Saves the current conversation to the sidebar
-   */
-  const saveCurrentConversation = (): void => {
-    if (messages.length === 0) return;
 
-    const title = messages.find(m => m.role === 'user')?.content.slice(0, 20) || 
-        `Chat ${new Date().toLocaleDateString()}`;
-
-    const conversationId = currentConversationId || generateId();
-
-    setConversations((prev) => {
-      // Check if conversation already exists
-      const existingIndex = prev.findIndex(c => c.id === conversationId);
-      if (existingIndex >= 0) {
-        // Update existing conversation
-        const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          messages,
-          timestamp: new Date(),
-        };
-        return updated;
-      } else {
-        // Add new conversation
-        return [
-          ...prev,
-          {
-            id: conversationId,
-            name: title,
-            messages,
-            timestamp: new Date(),
-          },
-        ];
+  // Load conversations from localStorage on component mount
+  useEffect(() => {
+    const loadConversations = () => {
+      try {
+        const saved = localStorage.getItem('chatConversations');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          // Convert timestamp strings back to Date objects
+          const formattedConversations = parsed.map((conv: any) => ({
+            ...conv,
+            timestamp: new Date(conv.timestamp),
+          }));
+          setConversations(formattedConversations);
+        }
+      } catch (error) {
+        console.error('Failed to load conversations:', error);
       }
-    });
+    };
 
-    setCurrentConversationId(conversationId);
-  }
+    loadConversations();
+  }, []);
 
-    /**
+  // Save conversations to localStorage whenever they change
+  useEffect(() => {
+    if (conversations.length > 0) {
+      localStorage.setItem('chatConversations', JSON.stringify(conversations));
+    }
+  }, [conversations]);
+
+  // Update current conversation's messages whenever messages change
+  useEffect(() => {
+    if (currentConversationId && messages.length > 0) {
+      setConversations(prev =>
+        prev.map(conv =>
+          conv.id === currentConversationId
+            ? { ...conv, messages: [...messages] }
+            : conv
+        )
+      );
+    }
+  }, [messages, currentConversationId]);
+
+
+
+
+
+
+  // const [hasMore, setHasMore] = useState<boolean>(false);
+  // const [page, setPage] = useState<number>(1);
+
+  // const loadMoreMessages = async () => {
+  //   if (!currentConversationId) return;
+
+  //   const response = await fetch(`http://localhost:8000/conversations/${currentConversationId}/messages/?skip=${page * 20}&limit=20`);
+  //   const newMessages = await response.json();
+
+  //   setMessages((prevMessages) => [...newMessages, ...prevMessages]);
+  //   setPage(page + 1);
+  //   setHasMore(newMessages.length === 20);
+  // };
+
+
+
+  /**
    * Starts a new conversation
    */
   const startNewConversation = (): void => {
-    if (messages.length > 0) {
-      saveCurrentConversation();
-    }
+    // TODO: Implement conversation saving
+    // if (messages.length > 0) {
+    //   saveConversation(currentConversationId, messages);
+    // }
     setMessages([]);
     setCurrentConversationId(null);
   };
@@ -87,10 +113,32 @@ const ChatContainer: React.FC = () => {
    * Loads a saved conversation
    */
   const loadConversation = (conversationId: string): void => {
-    const conversation = conversations.find(c => c.id === conversationId);
-    if (conversation) {
-      setMessages(conversation.messages);
+    const conv = conversations.find(c => c.id === conversationId);
+    if (conv) {
+      // Convert timestamp strings back to Date objects
+      const messagesWithDates = conv.messages.map(msg => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp)
+      }));
+      setMessages(messagesWithDates);
       setCurrentConversationId(conversationId);
+    }
+  };
+
+  /**
+   * Deletes a conversation
+   */
+  const deleteConversation = (conversationId: string, event: React.MouseEvent): void => {
+    // Stop the click from bubbling up to the conversation box
+    event.stopPropagation();
+
+    // Remove from conversations list
+    setConversations(prev => prev.filter(c => c.id !== conversationId));
+
+    // If we're deleting the current conversation, clear the messages
+    if (currentConversationId === conversationId) {
+      setMessages([]);
+      setCurrentConversationId(null);
     }
   };
   
@@ -110,8 +158,18 @@ const ChatContainer: React.FC = () => {
    * 4. Handles any errors
    */
   const handleSendMessage = async (content: string): Promise<void> => {
+    // Create new conversation if none exists
     if (!currentConversationId) {
-      setCurrentConversationId(generateId());
+      const newConvId = generateId();
+      const newConversation = {
+        id: newConvId,
+        name: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
+        messages: [],
+        timestamp: new Date(),
+      };
+
+      setCurrentConversationId(newConvId);
+      setConversations(prev => [newConversation, ...prev]); // Add to beginning
     }    
     // Create user message object
     const userMessage: ChatMessage = {
@@ -171,45 +229,8 @@ const ChatContainer: React.FC = () => {
         )
       );
 
-      console.log('Final bot response received:', response.reply);
-      console.log('Current conversation ID:', currentConversationId);
-      console.log('Current messages count:', messages.length);
-            // Save after state has updated
-            // Save after state has updated - use a ref to avoid duplicates
-      setTimeout(() => {
-        // Get the current conversation ID at the time of saving
-        const convId = currentConversationId;
-        
-        setMessages((currentMessages) => {
-          if (currentMessages.length > 0) {
-            const title = currentMessages.find(m => m.role === 'user')?.content.slice(0, 20) || 
-                `Chat ${new Date().toLocaleDateString()}`;
-            
-            // Use the captured conversation ID, not the state one
-            setConversations((prev) => {
-              const existingIndex = prev.findIndex(c => c.id === convId);
-              if (existingIndex >= 0) {
-                const updated = [...prev];
-                updated[existingIndex] = {
-                  ...updated[existingIndex],
-                  messages: currentMessages,
-                  timestamp: new Date(),
-                };
-                return updated;
-              } else {
-                // Only add if it doesn't exist
-                return [...prev, {
-                  id: convId!,
-                  name: title,
-                  messages: currentMessages,
-                  timestamp: new Date(),
-                }];
-              }
-            });
-          }
-          return currentMessages;
-        });
-      }, 500);
+      // Note: Conversation persistence is handled via localStorage
+      // Backend API requires authentication which isn't implemented yet
 
     } catch (err) {
       // Type-safe error handling
@@ -231,6 +252,7 @@ const ChatContainer: React.FC = () => {
     }
   };
   
+
   /**
    * Closes the error snackbar
    */
@@ -293,18 +315,41 @@ const ChatContainer: React.FC = () => {
                 color: conv.id === currentConversationId ? 'primary.contrastText' : 'text.primary',
                 borderRadius: 1,
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
                 '&:hover': {
                   bgcolor: 'primary.main',
                   color: 'primary.contrastText',
+                  '& .delete-icon': {
+                    opacity: 1,
+                  },
                 },
               }}
             >
-              <Typography variant="body2" noWrap>
-                {conv.name}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {conv.timestamp.toLocaleString()}
-              </Typography>
+              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                <Typography variant="body2" noWrap>
+                  {conv.name}
+                </Typography>
+                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                  {conv.timestamp.toLocaleString()}
+                </Typography>
+              </Box>
+              <IconButton
+                className="delete-icon"
+                size="small"
+                onClick={(e) => deleteConversation(conv.id, e)}
+                sx={{
+                  opacity: 0,
+                  transition: 'opacity 0.2s',
+                  color: 'inherit',
+                  '&:hover': {
+                    bgcolor: 'rgba(255, 255, 255, 0.1)',
+                  },
+                }}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
             </Box>
           ))}
         </Box>

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+
+      - name: Install backend dependencies
+        run: |
+          pip install uv
+          cd backend
+          uv sync
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          uv run pytest
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install frontend dependencies
+        run: |
+          cd my-chatbot
+          npm install
+
+      - name: Run frontend tests
+        run: |
+          cd my-chatbot
+          npm test

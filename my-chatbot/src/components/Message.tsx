@@ -1,5 +1,8 @@
-import { Box, Typography, Paper } from '@mui/material';
+import { Box, Typography, Paper, Button } from '@mui/material';
 import { ChatMessage } from '../types/chat';
+import ReactMarkdown from 'react-markdown';
+import hljs from 'highlight.js';
+
 
 /**
  * Props interface for the Message component
@@ -17,6 +20,8 @@ interface MessageProps {
  * @example
  * <Message message={{ id: '1', role: 'user', content: 'Hello!', timestamp: new Date() }} />
  */
+import React from 'react';
+
 const Message: React.FC<MessageProps> = ({ message }) => {
   // Determine if this is a user message
   const isUser = message.role === 'user';
@@ -50,9 +55,9 @@ const Message: React.FC<MessageProps> = ({ message }) => {
           width: '65%',
           maxWidth: '65%',
           // Different background colours for user vs bot messages
-          bgcolor: isUser ? 'primary.main' : 'background.paper',
+          bgcolor: isUser ? 'primary.main' : 'grey.800',
           // White text for user messages on dark background
-          color: isUser ? 'primary.contrastText' : 'text.primary',
+          color: isUser ? 'primary.contrastText' : '#ffffff',
           px: 3,  // Horizontal padding
           py: 2, // Vertical padding
           borderRadius: 4, // Rounded corners
@@ -66,18 +71,45 @@ const Message: React.FC<MessageProps> = ({ message }) => {
           },
         }}
       >
-        {/* Message content */}
-        <Typography
-          variant="body1"
-          sx={{
-            wordWrap: 'break-word', // Prevent long words from breaking layout
-            whiteSpace: 'pre-wrap',  // Preserve line breaks and whitespace
-            fontSize: '1.2rem',
-            lineHeight: 1.6
-          }}
-        >
-          {message.content}
-        </Typography>
+        <Box sx={{ position: 'relative' }}>
+          <Typography
+            component="div"
+            sx={{
+              color: 'inherit',
+              '& p': { margin: 0, color: 'inherit' },
+              '& *': { color: 'inherit' }
+            }}
+          >
+            <ReactMarkdown
+              components={{
+                code({ className, children }) {
+                  const match = /language-(\w+)/.exec(className || '');
+                  const code = String(children).replace(/\n$/, '');
+                  const highlightedCode = match ? hljs.highlight(code, { language: match[1] }).value : code;
+                  return (
+                    <pre>
+                      <code dangerouslySetInnerHTML={{ __html: highlightedCode }} />
+                    </pre>
+                  );
+                },
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </Typography>
+          <Button 
+            size="small" 
+            onClick={() => navigator.clipboard.writeText(message.content)}
+            sx={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              color: isUser ? 'primary.contrastText' : 'text.primary',
+            }}
+          >
+            Copy
+          </Button>
+        </Box>
 
         {/* Timestamp */}
         <Typography
@@ -102,4 +134,4 @@ const style = document.createElement('style');
 style.textContent = `@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`;
 document.head.appendChild(style);
 
-export default Message;
+export default React.memo(Message);

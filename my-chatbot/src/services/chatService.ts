@@ -72,7 +72,8 @@ class WebSocketManager {
             try {
                 const messageId = `${Date.now()}-${Math.random()}`;
                 let lastContent = '';
-                let lastMessageTime = Date.now();
+                let lastMessageTime: number | null = null; // Start as null, set when first message arrives
+                let hasReceivedContent = false;
 
                 // Set a timeout to reject if no response within 30 seconds
                 const timeout = setTimeout(() => {
@@ -87,6 +88,7 @@ class WebSocketManager {
                 const updateHandler = (value: string) => {
                     lastMessageTime = Date.now();
                     lastContent = value;
+                    hasReceivedContent = true;
                     // Call callback for every update
                     if (onUpdate) {
                         onUpdate(value);
@@ -95,13 +97,16 @@ class WebSocketManager {
 
                 this.messageResolvers.set(messageId, updateHandler);
 
-                // Check for stream completion (no messages for 500ms)
+                // Check for stream completion (no messages for 500ms after receiving content)
                 const checkComplete = setInterval(() => {
-                    if (Date.now() - lastMessageTime > 500) {
-                        clearInterval(checkComplete);
-                        clearTimeout(timeout);
-                        this.messageResolvers.delete(messageId);
-                        resolve(lastContent);
+                    // Only check for completion if we've received at least one message
+                    if (hasReceivedContent && lastMessageTime !== null) {
+                        if (Date.now() - lastMessageTime > 500) {
+                            clearInterval(checkComplete);
+                            clearTimeout(timeout);
+                            this.messageResolvers.delete(messageId);
+                            resolve(lastContent);
+                        }
                     }
                 }, 100);
             } catch (error) {
@@ -172,7 +177,7 @@ export const sendMessage = async (
         return {
             reply,
             metadata: {
-                model: 'gpt-3.5-turbo',
+                model: 'gpt-4o',
                 tokensUsed: 0, // Backend doesn't provide this yet
             },
         };

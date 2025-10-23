@@ -69,8 +69,6 @@ const MessageInput: React.FC<MessageInputProps> = ({
                         },
                     }}
                     slotProps={{
-                        'aria-label': 'message input',
-                        'aria-describedby': 'send-message-button',
                     }}
                 />
 
