@@ -4,28 +4,22 @@ import { ThemeProvider, CssBaseline, IconButton, Box } from '@mui/material';
 import { Brightness4, Brightness7 } from '@mui/icons-material';
 import ChatContainer from './components/ChatContainer';
 import { getTheme } from './theme/theme';
-import { initializeConnection, closeConnection } from './services/chatService';
 
 /**
  * Main App component
  * Provides theme context and dark mode toggle functionality
- * 
+ *
  * @component
  */
 function App() {
   // State for theme mode (light or dark)
   const [mode, setMode] = useState<'light' | 'dark'>('dark');
 
-  /**
-   * Initialize WebSocket connection on component mount
-   */
   useEffect(() => {
-    initializeConnection();
-
-    // Cleanup: close connection on component unmount
-    return () => {
-      closeConnection();
-    };
+    const stored = localStorage.getItem('codhechat.theme');
+    if (stored === 'light' || stored === 'dark') {
+      setMode(stored);
+    }
   }, []);
 
   /**
@@ -38,7 +32,11 @@ function App() {
    * Toggle between light and dark mode
    */
   const toggleTheme = (): void => {
-    setMode((prevMode) => (prevMode === 'light' ? 'dark' : 'light'));
+    setMode((prevMode) => {
+      const nextMode = prevMode === 'light' ? 'dark' : 'light';
+      localStorage.setItem('codhechat.theme', nextMode);
+      return nextMode;
+    });
   };
 
   return (

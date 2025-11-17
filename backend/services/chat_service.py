@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from typing import AsyncIterator, Iterable, Protocol
+
+from openai import AsyncOpenAI
+
+from settings import Settings
+
+
+class ChatClient(Protocol):
+    async def stream_chat_completion(
+        self, messages: list[dict[str, str]]
+    ) -> AsyncIterator[str]:
+        """Stream completion chunks for the provided conversation."""
+
+
+class OpenAIChatClient:
+    """Concrete chat client backed by OpenAI's Chat Completions API."""
+
+    def __init__(self, api_key: str, model: str) -> None:
+        self._client = AsyncOpenAI(api_key=api_key)
+        self._model = model
+
+    async def stream_chat_completion(
+        self, messages: list[dict[str, str]]
+    ) -> AsyncIterator[str]:
+        stream = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            stream=True,
+        )
+
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+
+class ChatService:
+    def __init__(self, client: ChatClient, system_prompt: str | None = None) -> None:
+        self._client = client
+        self._system_prompt = system_prompt or "You are a helpful assistant."
+
+    async def stream_reply(
+        self, history: list[dict[str, str]]
+    ) -> AsyncIterator[str]:
+        messages: list[dict[str, str]]
+        if history and history[0].get("role") == "system":
+            messages = history
+        else:
+            messages = [{"role": "system", "content": self._system_prompt}, *history]
+
+        async for chunk in self._client.stream_chat_completion(messages):
+            yield chunk
+
+    async def generate_reply(self, history: list[dict[str, str]]) -> str:
+        response_parts: list[str] = []
+        async for chunk in self.stream_reply(history):
+            response_parts.append(chunk)
+        return "".join(response_parts)
+
+
+def build_chat_service(settings: Settings) -> ChatService:
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+    client = OpenAIChatClient(settings.openai_api_key, settings.openai_model)
+    return ChatService(client)

@@ -1,8 +1,21 @@
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class HealthComponent(BaseModel):
+    component: str
+    status: Literal["ok", "degraded", "error"]
+    detail: str | None = None
+
+
+class HealthStatus(BaseModel):
+    status: Literal["ok", "degraded", "error"]
+    checks: list[HealthComponent]
 
 class MessageBase(BaseModel):
-    role: str
+    role: Literal["system", "user", "assistant"]
     content: str
 
 class Message(MessageBase):
@@ -19,7 +32,7 @@ class Conversation(ConversationBase):
 
     id: int
     created_at: datetime
-    messages: list[Message] = []
+    messages: list[Message] = Field(default_factory=list)
 
 class UserBase(BaseModel):
     username: str
@@ -31,4 +44,40 @@ class User(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    conversations: list[Conversation] = []
+    conversations: list[Conversation] = Field(default_factory=list)
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class GuestSession(Token):
+    user_id: int
+
+
+class ChatRequest(BaseModel):
+    conversation_id: int | None = None
+    message: str
+
+    _validate_message = field_validator("message")(
+        lambda v: _validate_text(v, "message")
+    )
+
+
+class ChatResponse(BaseModel):
+    conversation_id: int
+    reply: str
+
+
+class ChatStreamRequest(ChatRequest):
+    request_id: str
+
+
+def _validate_text(value: str, field_name: str) -> str:
+    trimmed = value.strip()
+    if not trimmed:
+        raise ValueError(f"{field_name.capitalize()} cannot be empty")
+    if len(trimmed) > 5000:
+        raise ValueError(f"{field_name.capitalize()} is too long")
+    return trimmed

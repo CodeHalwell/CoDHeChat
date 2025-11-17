@@ -1,73 +1,33 @@
-# React + TypeScript + Vite
+# CoDHeChat Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This Vite + React + TypeScript application provides the real-time chat interface for the FastAPI backend. It manages guest sessions, maintains authenticated WebSocket connections, renders streaming assistant responses, and synchronizes conversations with the API.
 
-Currently, two official plugins are available:
+## Available scripts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+All commands are run from the `my-chatbot/` directory:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install        # install dependencies
+npm run dev        # start Vite dev server on http://localhost:5173
+npm run build      # production build
+npm run test       # run Vitest unit tests
+npm run lint       # run ESLint with the repo defaults
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment variables
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Create a `.env` file (or use the defaults):
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+VITE_API_URL=http://localhost:8000
+```
+
+The value must match the backend URL so that the frontend can request guest tokens, fetch conversations, and open authenticated WebSocket connections.
+
+## Architecture notes
+
+- `src/services/sessionService.ts` provisions short-lived guest JWTs by calling the backend `/auth/guest` endpoint and stores them in `localStorage`.
+- `src/services/chatService.ts` maintains a singleton WebSocket connection, correlates server chunks by `requestId`, and updates pending resolver callbacks.
+- `src/services/conversationService.ts` exposes simple helpers for listing conversations and retrieving message history from the REST API.
+- `src/components/Message.tsx` renders Markdown/Code blocks via `react-markdown`, `rehype-sanitize`, and `highlight.js` so that user provided content is sanitized before hitting the DOM.
+- Theme preferences are persisted across sessions, and all conversation data is sourced from the backend instead of local storage so multiple devices stay in sync.
