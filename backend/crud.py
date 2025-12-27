@@ -1,3 +1,4 @@
+import secrets
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -26,8 +27,10 @@ def create_user(db: Session, user: schemas.UserCreate):
 
 def create_guest_user(db: Session) -> models.User:
     username = f"guest-{uuid4().hex[:8]}"
-    # Guest users do not have a usable password; use a sentinel value.
-    hashed_password = get_password_hash("guest")
+    # Guest users authenticate via JWT tokens, not passwords.
+    # Use a random, non-recoverable password that cannot be used for authentication.
+    random_password = secrets.token_urlsafe(32)
+    hashed_password = get_password_hash(random_password)
     user = models.User(username=username, hashed_password=hashed_password)
     db.add(user)
     db.commit()

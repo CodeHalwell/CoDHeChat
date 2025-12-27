@@ -22,8 +22,9 @@ class ChatClient(Protocol):
         Asynchronously stream completion chunks for the provided conversation history.
 
         Args:
-            messages (list[dict[str, str]]): A list of message objects representing the conversation history.
-                Each message should be a dictionary with at least "role" and "content" keys.
+            messages (list[dict[str, str]]): A list of message dictionaries representing the conversation history.
+                Each message must be a dictionary with string keys "role" and "content", where both values are strings.
+                Example: [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}]
 
         Yields:
             str: The next chunk of the generated completion as a string.

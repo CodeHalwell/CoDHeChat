@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 
+# Constants for conversation title truncation
+TITLE_MAX_LENGTH = 60
+TITLE_TRUNCATE_LENGTH = 57
+
 
 class ConnectionLimiter:
     def __init__(self, max_connections: int) -> None:
@@ -325,8 +329,8 @@ def _ensure_conversation(
         return conversation
 
     if chat_request.message:
-        if len(chat_request.message) > 60:
-            title = chat_request.message[:57] + "..."
+        if len(chat_request.message) > TITLE_MAX_LENGTH:
+            title = chat_request.message[:TITLE_TRUNCATE_LENGTH] + "..."
         else:
             title = chat_request.message
     else:
