@@ -1,227 +1,201 @@
-import { ChatRequest, ChatResponse, ApiError } from '../types/chat';
+import { ApiError, ChatRequest, ChatResponse } from '../types/chat';
+import { API_BASE_URL } from './httpClient';
 
-/**
- * WebSocket connection manager for real-time chat communication
- */
+interface MessageResolver {
+    resolve: (value: ChatResponse) => void;
+    reject: (error: Error) => void;
+    onUpdate?: (partialContent: string, conversationId: number) => void;
+    latest?: string;
+    conversationId?: number;
+}
+
 class WebSocketManager {
     private ws: WebSocket | null = null;
-    private url: string;
-    private messageResolvers: Map<string, (value: string) => void> = new Map();
-    private reconnectAttempts = 0;
-    private maxReconnectAttempts = 5;
-    private reconnectDelay = 1000; // Start with 1 second, exponential backoff
+    private messageResolvers: Map<string, MessageResolver> = new Map();
+    private connectPromise: Promise<void> | null = null;
+    private activeToken: string | null = null;
 
-    constructor() {
-        const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-        // Convert http:// to ws:// or https:// to wss://
-        this.url = baseUrl
-            .replace(/^http:/, 'ws:')
-            .replace(/^https:/, 'wss:');
+    private get url(): string {
+        return API_BASE_URL.replace(/^http/i, (value) =>
+            value.toLowerCase() === 'https' ? 'wss' : 'ws'
+        );
     }
 
-    /**
-     * Connects to the WebSocket server
-     */
-    public connect(): Promise<void> {
-        return new Promise((resolve, reject) => {
-            try {
-                this.ws = new WebSocket(`${this.url}/ws`);
+    public async connect(token: string): Promise<void> {
+        if (
+            this.ws &&
+            this.ws.readyState === WebSocket.OPEN &&
+            this.activeToken === token
+        ) {
+            return;
+        }
 
+        if (this.connectPromise && this.activeToken === token) {
+            return this.connectPromise;
+        }
+
+        this.activeToken = token;
+        this.connectPromise = new Promise((resolve, reject) => {
+            try {
+                this.ws = new WebSocket(`${this.url}/ws?token=${token}`);
                 this.ws.onopen = () => {
-                    console.log('WebSocket connected');
-                    this.reconnectAttempts = 0;
+                    this.connectPromise = null;
                     resolve();
                 };
-
-                this.ws.onmessage = (event: MessageEvent) => {
-                    // Call ALL active resolvers (should only be one active request at a time)
-                    this.messageResolvers.forEach((resolver) => {
-                        resolver(event.data);
-                    });
-                };
-
-                this.ws.onerror = (error: Event) => {
-                    console.error('WebSocket error:', error);
+                this.ws.onerror = () => {
+                    this.cleanupConnection();
                     reject(new Error('WebSocket connection failed'));
                 };
-
                 this.ws.onclose = () => {
-                    console.log('WebSocket disconnected');
-                    this.ws = null;
-                    this.attemptReconnect();
+                    this.cleanupConnection();
+                };
+                this.ws.onmessage = (event: MessageEvent) => {
+                    this.handleServerMessage(event);
                 };
             } catch (error) {
-                reject(error);
+                this.connectPromise = null;
+                reject(error as Error);
             }
         });
+
+        return this.connectPromise;
     }
 
-    /**
-     * Sends a message through the WebSocket with streaming support
-     */
+    public disconnect(): void {
+        this.cleanupConnection();
+    }
+
     public async sendMessage(
-        message: string,
-        onUpdate?: (partialContent: string) => void
-    ): Promise<string> {
+        request: ChatRequest,
+        token: string,
+        onUpdate?: (partialContent: string, conversationId: number) => void
+    ): Promise<ChatResponse> {
+        await this.connect(token);
+
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            // Try to reconnect if not connected
-            await this.connect();
+            throw new Error('WebSocket is not connected');
         }
 
         return new Promise((resolve, reject) => {
+            const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            this.messageResolvers.set(requestId, {
+                resolve: (value) => {
+                    resolve(value);
+                    this.messageResolvers.delete(requestId);
+                },
+                reject: (error) => {
+                    reject(error);
+                    this.messageResolvers.delete(requestId);
+                },
+                onUpdate,
+            });
+
             try {
-                const messageId = `${Date.now()}-${Math.random()}`;
-                let lastContent = '';
-                let lastMessageTime: number | null = null; // Start as null, set when first message arrives
-                let hasReceivedContent = false;
-
-                // Set a timeout to reject if no response within 30 seconds
-                const timeout = setTimeout(() => {
-                    clearInterval(checkComplete);
-                    this.messageResolvers.delete(messageId);
-                    reject(new Error('Message timeout - no response from server'));
-                }, 30000);
-
-                this.ws!.send(message);
-
-                // Handler for each incoming message update
-                const updateHandler = (value: string) => {
-                    lastMessageTime = Date.now();
-                    lastContent = value;
-                    hasReceivedContent = true;
-                    // Call callback for every update
-                    if (onUpdate) {
-                        onUpdate(value);
-                    }
-                };
-
-                this.messageResolvers.set(messageId, updateHandler);
-
-                // Check for stream completion (no messages for 500ms after receiving content)
-                const checkComplete = setInterval(() => {
-                    // Only check for completion if we've received at least one message
-                    if (hasReceivedContent && lastMessageTime !== null) {
-                        if (Date.now() - lastMessageTime > 500) {
-                            clearInterval(checkComplete);
-                            clearTimeout(timeout);
-                            this.messageResolvers.delete(messageId);
-                            resolve(lastContent);
-                        }
-                    }
-                }, 100);
+                this.ws!.send(
+                    JSON.stringify({
+                        request_id: requestId,
+                        message: request.message,
+                        conversation_id: request.conversationId ?? null,
+                    })
+                );
             } catch (error) {
-                reject(error);
+                this.messageResolvers.delete(requestId);
+                reject(error instanceof Error ? error : new Error('Failed to send message'));
             }
         });
     }
 
-    /**
-     * Attempts to reconnect with exponential backoff
-     */
-    private attemptReconnect(): void {
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-            console.log(`Attempting to reconnect in ${delay}ms...`);
-            setTimeout(() => {
-                this.connect().catch((error) => {
-                    console.error('Reconnection failed:', error);
-                });
-            }, delay);
-        } else {
-            console.error('Max reconnection attempts reached');
+    public isConnected(token?: string): boolean {
+        return (
+            !!this.ws &&
+            this.ws.readyState === WebSocket.OPEN &&
+            (!token || this.activeToken === token)
+        );
+    }
+
+    private handleServerMessage(event: MessageEvent): void {
+        try {
+            const data = JSON.parse(event.data);
+            if (!data.requestId && !data.request_id) {
+                return;
+            }
+            const requestId: string = data.requestId || data.request_id;
+            if (!requestId) {
+                return;
+            }
+            const resolver = this.messageResolvers.get(requestId);
+            if (!resolver) {
+                return;
+            }
+
+            switch (data.type) {
+                case 'chunk': {
+                    resolver.latest = data.content;
+                    resolver.conversationId = data.conversationId;
+                    if (resolver.onUpdate && typeof data.content === 'string') {
+                        resolver.onUpdate(data.content, data.conversationId);
+                    }
+                    break;
+                }
+                case 'complete': {
+                    resolver.resolve({
+                        reply: resolver.latest ?? '',
+                        conversationId: resolver.conversationId ?? data.conversationId,
+                        metadata: { model: 'gpt-4o-mini' },
+                    });
+                    break;
+                }
+                case 'error': {
+                    resolver.reject(
+                        new Error(data.detail || 'Chat streaming failed')
+                    );
+                    break;
+                }
+                default:
+                    break;
+            }
+        } catch (error) {
+            console.error('Failed to process WebSocket message', error);
         }
     }
 
-    /**
-     * Closes the WebSocket connection
-     */
-    public disconnect(): void {
+    private cleanupConnection(): void {
         if (this.ws) {
             this.ws.close();
-            this.ws = null;
         }
-    }
-
-    /**
-     * Checks if WebSocket is connected
-     */
-    public isConnected(): boolean {
-        return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+        this.ws = null;
+        this.connectPromise = null;
+        this.messageResolvers.forEach((resolver) =>
+            resolver.reject(new Error('WebSocket disconnected'))
+        );
+        this.messageResolvers.clear();
     }
 }
 
-// Create a singleton instance
 const wsManager = new WebSocketManager();
 
-/**
- * Sends a message to the chatbot API via WebSocket and returns the response
- * @param request - The chat request containing the user's message
- * @param onUpdate - Optional callback to receive streaming updates
- * @returns Promise resolving to the chatbot's response
- * @throws ApiError if the request fails
- */
 export const sendMessage = async (
     request: ChatRequest,
-    onUpdate?: (partialContent: string) => void
+    token: string,
+    onUpdate?: (partialContent: string, conversationId: number) => void
 ): Promise<ChatResponse> => {
     try {
-        // Ensure WebSocket is connected
-        if (!wsManager.isConnected()) {
-            await wsManager.connect();
-        }
-
-        // Send the user's message through WebSocket with streaming callback
-        const reply = await wsManager.sendMessage(request.message, onUpdate);
-
-        return {
-            reply,
-            metadata: {
-                model: 'gpt-4o',
-                tokensUsed: 0, // Backend doesn't provide this yet
-            },
-        };
+        return await wsManager.sendMessage(request, token, onUpdate);
     } catch (error) {
         const apiError: ApiError = {
-            message: error instanceof Error ? error.message : 'Failed to send message. Please try again.',
-            status: 500,
-            details: error instanceof Error ? error.stack : undefined,
+            message: error instanceof Error ? error.message : 'Failed to send message.',
         };
         throw apiError;
     }
 };
 
-/**
- * Initializes the WebSocket connection
- * Call this on app startup
- */
-export const initializeConnection = async (): Promise<void> => {
-    try {
-        await wsManager.connect();
-        console.log('Chat service initialized successfully');
-    } catch (error) {
-        console.error('Failed to initialize chat service:', error);
-        // Don't throw - let it retry on first message
-    }
-};
-
-/**
- * Closes the WebSocket connection
- * Call this on app shutdown
- */
 export const closeConnection = (): void => {
     wsManager.disconnect();
 };
 
-/**
- * Health check - checks if WebSocket is connected
- */
-export const checkApiHealth = async (): Promise<boolean> => {
-    if (wsManager.isConnected()) {
-        return true;
-    }
+export const checkApiHealth = async (token: string): Promise<boolean> => {
     try {
-        await wsManager.connect();
+        await wsManager.connect(token);
         return true;
     } catch (error) {
         console.error('Health check failed:', error);

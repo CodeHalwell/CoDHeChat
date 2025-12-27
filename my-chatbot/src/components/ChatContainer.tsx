@@ -1,426 +1,322 @@
-// src/components/ChatContainer.tsx
-import { useState, useEffect } from 'react';
-import { Box, Typography, Alert, Snackbar, IconButton } from '@mui/material';
-import DeleteIcon from '@mui/icons-material/Delete';
+import { useEffect, useMemo, useState } from 'react';
+import { Box, Typography, Alert, Snackbar, CircularProgress } from '@mui/material';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
-import { ChatMessage, ApiError } from '../types/chat';
-import { sendMessage } from '../services/chatService';
-import logo from '../assets/Logo WO Background.png'; // or logo.svg, or whatever your file is named
+import { ApiError, ChatMessage, ConversationSummary, GuestSession } from '../types/chat';
+import { sendMessage, closeConnection } from '../services/chatService';
+import { fetchConversations, fetchConversationMessages } from '../services/conversationService';
+import { ensureGuestSession } from '../services/sessionService';
+import logo from '../assets/Logo WO Background.png';
 
-/**
- * ChatContainer component manages the entire chat interface
- * Handles state management, API calls, and error handling
- * 
- * @component
- */
 const ChatContainer: React.FC = () => {
-  // State for storing all messages
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [error, setError] = useState<string | null>(null);
+    const [session, setSession] = useState<GuestSession | null>(null);
+    const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+    const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
 
-  
-  // State for loading indicator
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  
-  // State for error handling
-  const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+        ensureGuestSession()
+            .then(async (guestSession) => {
+                setSession(guestSession);
+                await refreshConversations(guestSession);
+            })
+            .catch((err: Error) => {
+                setError(err.message || 'Failed to start session');
+            });
 
-  // New state for managing conversations
-  const [conversations, setConversations] = useState<Array<{
-     id: string;
-     name: string;
-     messages: ChatMessage[];
-     timestamp: Date;
-  }>>([]);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+        return () => {
+            closeConnection();
+        };
+    }, []);
 
-  // Load conversations from localStorage on component mount
-  useEffect(() => {
-    const loadConversations = () => {
-      try {
-        const saved = localStorage.getItem('chatConversations');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          // Convert timestamp strings back to Date objects
-          const formattedConversations = parsed.map((conv: any) => ({
-            ...conv,
-            timestamp: new Date(conv.timestamp),
-          }));
-          setConversations(formattedConversations);
+    const refreshConversations = async (
+        guestSession: GuestSession,
+        focusConversationId?: number
+    ) => {
+        try {
+            const data = await fetchConversations(guestSession.token);
+            setConversations(data);
+            const targetId = focusConversationId ?? currentConversationId;
+            if (targetId) {
+                await loadConversation(targetId, guestSession);
+            }
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : 'Unable to load conversations'
+            );
         }
-      } catch (error) {
-        console.error('Failed to load conversations:', error);
-      }
     };
 
-    loadConversations();
-  }, []);
-
-  // Save conversations to localStorage whenever they change
-  useEffect(() => {
-    if (conversations.length > 0) {
-      localStorage.setItem('chatConversations', JSON.stringify(conversations));
-    }
-  }, [conversations]);
-
-  // Update current conversation's messages whenever messages change
-  useEffect(() => {
-    if (currentConversationId && messages.length > 0) {
-      setConversations(prev =>
-        prev.map(conv =>
-          conv.id === currentConversationId
-            ? { ...conv, messages: [...messages] }
-            : conv
-        )
-      );
-    }
-  }, [messages, currentConversationId]);
-
-
-
-
-
-
-  // const [hasMore, setHasMore] = useState<boolean>(false);
-  // const [page, setPage] = useState<number>(1);
-
-  // const loadMoreMessages = async () => {
-  //   if (!currentConversationId) return;
-
-  //   const response = await fetch(`http://localhost:8000/conversations/${currentConversationId}/messages/?skip=${page * 20}&limit=20`);
-  //   const newMessages = await response.json();
-
-  //   setMessages((prevMessages) => [...newMessages, ...prevMessages]);
-  //   setPage(page + 1);
-  //   setHasMore(newMessages.length === 20);
-  // };
-
-
-
-  /**
-   * Starts a new conversation
-   */
-  const startNewConversation = (): void => {
-    // TODO: Implement conversation saving
-    // if (messages.length > 0) {
-    //   saveConversation(currentConversationId, messages);
-    // }
-    setMessages([]);
-    setCurrentConversationId(null);
-  };
-  
-  /**
-   * Loads a saved conversation
-   */
-  const loadConversation = (conversationId: string): void => {
-    const conv = conversations.find(c => c.id === conversationId);
-    if (conv) {
-      // Convert timestamp strings back to Date objects
-      const messagesWithDates = conv.messages.map(msg => ({
-        ...msg,
-        timestamp: new Date(msg.timestamp)
-      }));
-      setMessages(messagesWithDates);
-      setCurrentConversationId(conversationId);
-    }
-  };
-
-  /**
-   * Deletes a conversation
-   */
-  const deleteConversation = (conversationId: string, event: React.MouseEvent): void => {
-    // Stop the click from bubbling up to the conversation box
-    event.stopPropagation();
-
-    // Remove from conversations list
-    setConversations(prev => prev.filter(c => c.id !== conversationId));
-
-    // If we're deleting the current conversation, clear the messages
-    if (currentConversationId === conversationId) {
-      setMessages([]);
-      setCurrentConversationId(null);
-    }
-  };
-  
-  /**
-   * Generates a unique ID for messages
-   * In production, you might use UUID library
-   */
-  const generateId = (): string => {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  };
-
-  /**
-   * Handles sending a new message
-   * 1. Adds user message to state
-   * 2. Calls API to get bot response
-   * 3. Updates bot response in state as it streams
-   * 4. Handles any errors
-   */
-  const handleSendMessage = async (content: string): Promise<void> => {
-    // Create new conversation if none exists
-    if (!currentConversationId) {
-      const newConvId = generateId();
-      const newConversation = {
-        id: newConvId,
-        name: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
-        messages: [],
-        timestamp: new Date(),
-      };
-
-      setCurrentConversationId(newConvId);
-      setConversations(prev => [newConversation, ...prev]); // Add to beginning
-    }    
-    // Create user message object
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: 'user',
-      content,
-      timestamp: new Date(),
-    };
-
-    // Create bot message object with empty content (will be updated as stream arrives)
-    const botMessageId = generateId();
-    const botMessage: ChatMessage = {
-      id: botMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-    };
-
-    // Add user message to state immediately for instant feedback
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
-    
-    // Add empty bot message for streaming updates
-    setMessages((prevMessages) => [...prevMessages, botMessage]);
-
-    // Set loading state
-    setIsLoading(true);
-
-    // Clear any previous errors
-    setError(null);
-
-    try {
-      // Call API with user message and conversation history
-      // This will return the complete response once streaming is done
-      const response = await sendMessage(
-        {
-          message: content,
-          history: [...messages, userMessage],
-        },
-        // Callback to update message as it streams
-        (partialContent: string) => {
-          setMessages((prevMessages) =>
-            prevMessages.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, content: partialContent }
-                : msg
-            )
-          );
+    const loadConversation = async (
+        conversationId: number,
+        guestSession?: GuestSession
+    ): Promise<void> => {
+        const activeSession = guestSession ?? session;
+        if (!activeSession) {
+            return;
         }
-      );
+        setIsLoading(true);
+        try {
+            const history = await fetchConversationMessages(
+                conversationId,
+                activeSession.token
+            );
+            setMessages(history);
+            setCurrentConversationId(conversationId);
+        } catch (err) {
+            setError(
+                err instanceof Error
+                    ? err.message
+                    : 'Unable to load conversation'
+            );
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
-      // Update final message content (in case the streaming callback didn't capture everything)
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === botMessageId
-            ? { ...msg, content: response.reply }
-            : msg
-        )
-      );
+    const startNewConversation = (): void => {
+        setMessages([]);
+        setCurrentConversationId(null);
+    };
 
-      // Note: Conversation persistence is handled via localStorage
-      // Backend API requires authentication which isn't implemented yet
+    const handleSendMessage = async (content: string): Promise<void> => {
+        if (!session) {
+            setError('Chat session is not ready yet.');
+            return;
+        }
 
-    } catch (err) {
-      // Type-safe error handling
-      const apiError = err as ApiError;
-      
-      // Set error message to display to user
-      setError(apiError.message || 'Failed to get response from chatbot');
+        const userMessage: ChatMessage = {
+            id: generateId(),
+            role: 'user',
+            content,
+            timestamp: new Date(),
+            conversationId: currentConversationId ?? undefined,
+        };
+        const assistantPlaceholder: ChatMessage = {
+            id: generateId(),
+            role: 'assistant',
+            content: '',
+            timestamp: new Date(),
+            conversationId: currentConversationId ?? undefined,
+        };
 
-      // Log error for debugging
-      console.error('Error sending message:', apiError);
+        setMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
+        setIsLoading(true);
+        setError(null);
 
-      // Remove the empty bot message if there was an error
-      setMessages((prevMessages) =>
-        prevMessages.filter((msg) => msg.id !== botMessageId)
-      );
-    } finally {
-      // Always clear loading state, whether success or failure
-      setIsLoading(false);
-    }
-  };
-  
-
-  /**
-   * Closes the error snackbar
-   */
-  const handleCloseError = (): void => {
-    setError(null);
-  };
-
-  return (
-    <Box sx={{ 
-      height: '100vh', 
-      display: 'flex', 
-      flexDirection: 'row',
-      width: '100%',
-      }}>
-      {/* Sidebar */}
-      <Box
-        sx={{
-          width: '280px',
-          bgcolor: 'background.paper',
-          borderRight: '1px solid',
-          borderColor: 'divider',
-          display: 'flex',
-          flexDirection: 'column',
-          p: 2,
-        }}
-      >
-        <Typography variant="h5" sx={{ mt: 15 }}>
-          Conversations
-        </Typography>
-
-        <Box
-          onClick={startNewConversation}
-          sx={{
-            mt: 2,
-            p: 1,
-            bgcolor: 'primary.main',
-            color: 'primary.contrastText',
-            borderRadius: 1,
-            textAlign: 'center',
-            cursor: 'pointer',
-            '&:hover': {
-              bgcolor: 'primary.dark',
-            },
-          }}
-        >
-          <Typography variant="body1">
-            + New Conversation
-          </Typography>
-        </Box>
-
-        <Box sx={{ mt: 4, flexGrow: 1, overflow: 'auto' }}>
-          {conversations.map((conv) => (
-            <Box
-              key={conv.id}
-              onClick={() => loadConversation(conv.id)}
-              sx={{
-                p: 1,
-                mb: 1,
-                bgcolor: conv.id === currentConversationId ? 'primary.light' : 'transparent',
-                color: conv.id === currentConversationId ? 'primary.contrastText' : 'text.primary',
-                borderRadius: 1,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                '&:hover': {
-                  bgcolor: 'primary.main',
-                  color: 'primary.contrastText',
-                  '& .delete-icon': {
-                    opacity: 1,
-                  },
+        try {
+            const response = await sendMessage(
+                {
+                    message: content,
+                    conversationId: currentConversationId,
                 },
-              }}
-            >
-              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                <Typography variant="body2" noWrap>
-                  {conv.name}
-                </Typography>
-                <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                  {conv.timestamp.toLocaleString()}
-                </Typography>
-              </Box>
-              <IconButton
-                className="delete-icon"
-                size="small"
-                onClick={(e) => deleteConversation(conv.id, e)}
+                session.token,
+                (partialContent, conversationId) => {
+                    setMessages((prev) =>
+                        prev.map((msg) =>
+                            msg.id === assistantPlaceholder.id
+                                ? {
+                                      ...msg,
+                                      content: partialContent,
+                                      conversationId,
+                                  }
+                                : msg
+                        )
+                    );
+                    if (!currentConversationId && conversationId) {
+                        setCurrentConversationId(conversationId);
+                    }
+                }
+            );
+
+            setCurrentConversationId(response.conversationId);
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === assistantPlaceholder.id
+                        ? {
+                              ...msg,
+                              content: response.reply,
+                              conversationId: response.conversationId,
+                          }
+                        : msg
+                )
+            );
+            await refreshConversations(session, response.conversationId);
+        } catch (err) {
+            const apiError = err as ApiError;
+            setError(
+                apiError.message || 'Failed to get response from the chatbot.'
+            );
+            setMessages((prev) =>
+                prev.filter((msg) => msg.id !== assistantPlaceholder.id)
+            );
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleCloseError = (): void => {
+        setError(null);
+    };
+
+    const currentConversationName = useMemo(() => {
+        if (!currentConversationId) {
+            return 'New conversation';
+        }
+        return (
+            conversations.find((conv) => conv.id === currentConversationId)?.name ||
+            'Conversation'
+        );
+    }, [conversations, currentConversationId]);
+
+    return (
+        <Box
+            sx={{
+                height: '100vh',
+                display: 'flex',
+                flexDirection: 'row',
+                width: '100%',
+            }}
+        >
+            <Box
                 sx={{
-                  opacity: 0,
-                  transition: 'opacity 0.2s',
-                  color: 'inherit',
-                  '&:hover': {
-                    bgcolor: 'rgba(255, 255, 255, 0.1)',
-                  },
+                    width: '280px',
+                    bgcolor: 'background.paper',
+                    borderRight: '1px solid',
+                    borderColor: 'divider',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    p: 2,
                 }}
-              >
-                <DeleteIcon fontSize="small" />
-              </IconButton>
+            >
+                <Typography variant="h5" sx={{ mt: 15 }}>
+                    Conversations
+                </Typography>
+
+                <Box
+                    onClick={startNewConversation}
+                    sx={{
+                        mt: 2,
+                        p: 1,
+                        bgcolor: 'primary.main',
+                        color: 'primary.contrastText',
+                        borderRadius: 1,
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        '&:hover': {
+                            bgcolor: 'primary.dark',
+                        },
+                    }}
+                >
+                    <Typography variant="body1">+ New Conversation</Typography>
+                </Box>
+
+                <Box sx={{ mt: 4, flexGrow: 1, overflow: 'auto' }}>
+                    {conversations.map((conv) => (
+                        <Box
+                            key={conv.id}
+                            onClick={() => loadConversation(conv.id)}
+                            sx={{
+                                p: 1,
+                                mb: 1,
+                                bgcolor:
+                                    conv.id === currentConversationId
+                                        ? 'primary.light'
+                                        : 'transparent',
+                                color:
+                                    conv.id === currentConversationId
+                                        ? 'primary.contrastText'
+                                        : 'text.primary',
+                                borderRadius: 1,
+                                cursor: 'pointer',
+                                '&:hover': {
+                                    bgcolor: 'primary.main',
+                                    color: 'primary.contrastText',
+                                },
+                            }}
+                        >
+                            <Typography variant="body2" noWrap>
+                                {conv.name}
+                            </Typography>
+                            <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                                {conv.createdAt.toLocaleString()}
+                            </Typography>
+                        </Box>
+                    ))}
+                    {conversations.length === 0 && (
+                        <Typography variant="body2" color="text.secondary">
+                            Start a conversation to see it here.
+                        </Typography>
+                    )}
+                </Box>
             </Box>
-          ))}
-        </Box>
-      </Box>
 
-      {/* Main chat area */}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* Header */}
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            py: 2,
-            px: 3,
-            borderBottom: '2px solid',
-            borderColor: 'divider',
-            backgroundColor: 'background.paper',
-          }}
-        >
-          <img 
-            src={logo} 
-            alt="Logo" 
-            style={{ height: '100px', width: 'auto' }} 
-          />
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-            <Typography variant="h4" component="h1">
-              AI Chatbot
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Ask me anything!
-            </Typography>
-          </Box>
-        </Box>
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <Box
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        py: 2,
+                        px: 3,
+                        borderBottom: '2px solid',
+                        borderColor: 'divider',
+                        backgroundColor: 'background.paper',
+                    }}
+                >
+                    <img
+                        src={logo}
+                        alt="Logo"
+                        style={{ height: '100px', width: 'auto' }}
+                    />
+                    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                        <Typography variant="h4" component="h1">
+                            {currentConversationName}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            Ask me anything!
+                        </Typography>
+                    </Box>
+                    {isLoading && <CircularProgress size={24} />}
+                </Box>
 
-        {/* Message List */}
-        <Box
-          sx={{
-            flexGrow: 1,
-            overflow: 'hidden',
-            bgcolor: 'background.default',
-            borderRadius: 4,
-            mb: 2,
-          }}
-        >
-          <MessageList messages={messages} isLoading={isLoading} />
-        </Box>
+                <Box
+                    sx={{
+                        flexGrow: 1,
+                        overflow: 'hidden',
+                        bgcolor: 'background.default',
+                        borderRadius: 4,
+                        mb: 2,
+                    }}
+                >
+                    <MessageList messages={messages} isLoading={isLoading} />
+                </Box>
 
-        {/* Message Input */}
-        <Box sx={{ mb: 4, ml: 2, mr: 2 }}>
-          <MessageInput
-            onSendMessage={handleSendMessage}
-            disabled={isLoading}
-            placeholder="Type your message..."
-          />
-        </Box>
+                <MessageInput
+                    onSendMessage={handleSendMessage}
+                    disabled={isLoading || !session}
+                />
+            </Box>
 
-        {/* Error notification */}
-        <Snackbar
-          open={!!error}
-          autoHideDuration={6000}
-          onClose={handleCloseError}
-          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        >
-          <Alert onClose={handleCloseError} severity="error" sx={{ width: '100%' }}>
-            {error}
-          </Alert>
-        </Snackbar>
-      </Box>
-    </Box>
-  );
+            <Snackbar
+                open={!!error}
+                autoHideDuration={6000}
+                onClose={handleCloseError}
+            >
+                <Alert severity="error" onClose={handleCloseError}>
+                    {error}
+                </Alert>
+            </Snackbar>
+        </Box>
+    );
 };
+
+function generateId(): string {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 export default ChatContainer;

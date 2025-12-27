@@ -2,7 +2,7 @@
 
 A modern, full-stack AI chatbot application featuring a React/TypeScript frontend with Material-UI and a Python FastAPI backend powered by OpenAI's GPT-3.5-turbo model. The application supports real-time streaming responses via WebSocket connections and includes conversation management with a sidebar for organizing multiple chat sessions.
 
-![Project Status](https://img.shields.io/badge/status-learning%20project-blue)
+![Project Status](https://img.shields.io/badge/status-production%20ready-green)
 ![Python](https://img.shields.io/badge/python-3.13+-blue)
 ![React](https://img.shields.io/badge/react-19.1.1-blue)
 ![TypeScript](https://img.shields.io/badge/typescript-5.9-blue)
@@ -19,15 +19,20 @@ A modern, full-stack AI chatbot application featuring a React/TypeScript fronten
 ### Conversation Management
 - **Multiple Conversations**: Create and manage multiple chat sessions
 - **Conversation Sidebar**: Easy navigation between different chat threads
-- **Conversation Persistence**: Conversations are saved in state during the session
-- **Quick Access**: Click on any saved conversation to resume it
+- **Server Persistence**: Conversations and messages are stored in the FastAPI backend so you can resume any thread from any browser
+- **Quick Access**: Click on any saved conversation to reload it from the server
 
 ### Technical Features
 - **Type-Safe**: Full TypeScript implementation on the frontend
 - **Error Handling**: Comprehensive error handling with user-friendly notifications
-- **Reconnection Logic**: Automatic WebSocket reconnection with exponential backoff
-- **Loading States**: Visual indicators for message processing
+- **Reconnection Logic**: Automatic WebSocket reconnection with exponential backoff and per-request correlation IDs
+- **Streaming Protocol**: WebSocket payloads are structured JSON chunks that include request IDs and conversation IDs, so concurrent prompts never leak tokens across sessions
+- **Security First**: Guest sessions obtain signed JWTs from `/auth/guest`, every API/WebSocket call validates the token, and secrets/configuration are centrally managed through a typed Pydantic settings layer
+- **Persistence Ready**: The backend defaults to SQLite for local development but can be pointed at PostgreSQL/MySQL by changing `DATABASE_URL`
 - **CORS Enabled**: Backend configured to accept requests from frontend
+- **Structured Logging & Health Checks**: JSON logs plus `/health` allow production observability and readiness probes out of the box
+
+> 📘 **New to production systems?** Read [`docs/PRODUCTION_GUIDE.md`](docs/PRODUCTION_GUIDE.md) for a decision-by-decision explanation of how each feature works and why it exists.
 
 ## 🏗️ Architecture
 
@@ -146,16 +151,23 @@ Open your browser and navigate to `http://localhost:5173`
 
 ### Backend Configuration
 
-The backend can be configured via environment variables in the `.env` file:
+Copy `backend/.env.example` to `backend/.env` and update the values:
 
 ```env
-# Required
+SECRET_KEY=replace-me
 OPENAI_API_KEY=sk-...your-key-here...
-
-# Optional (defaults shown)
-# HOST=0.0.0.0
-# PORT=8000
+DATABASE_URL=sqlite:///./chat.db
+MODEL_NAME=gpt-4o-mini
+LOG_LEVEL=INFO
+LOG_JSON=true
 ```
+
+- `SECRET_KEY` – required for signing JWT access tokens
+- `OPENAI_API_KEY` – required for real responses (tests override the chat service so they run offline)
+- `DATABASE_URL` – defaults to SQLite but accepts any SQLAlchemy connection string
+- `MODEL_NAME` – OpenAI model to call when generating responses
+- `LOG_LEVEL` – log verbosity (`DEBUG`, `INFO`, etc.)
+- `LOG_JSON` – set to `false` locally for human-friendly plain text logs
 
 ### Frontend Configuration
 
@@ -168,12 +180,12 @@ VITE_API_URL=http://localhost:8000
 
 ## 📝 Usage
 
-1. **Start a Chat**: Type your message in the input field at the bottom
-2. **Send Messages**: Press Enter or click the send button
-3. **Watch Responses Stream**: See the AI's response appear in real-time
-4. **Create New Conversations**: Click "+ New Conversation" in the sidebar
-5. **Switch Between Chats**: Click on any conversation in the sidebar to load it
-6. **Toggle Theme**: Click the sun/moon icon in the top-right corner
+1. **Start a Chat**: The frontend automatically provisions a short-lived guest token from `/auth/guest`, opens an authenticated WebSocket, and fetches your existing conversations
+2. **Send Messages**: Type a prompt and press Enter or click Send; the UI optimistically renders your message while the backend persists it
+3. **Watch Responses Stream**: Each WebSocket chunk updates the assistant message in place via a structured `{requestId, conversationId, content}` payload
+4. **Create New Conversations**: Click "+ New Conversation" in the sidebar to clear the panel; the server assigns a real conversation ID as soon as the next message is processed
+5. **Switch Between Chats**: Click on any conversation in the sidebar to retrieve its entire history from the backend
+6. **Toggle Theme**: Click the sun/moon icon in the top-right corner (the chosen mode is persisted to localStorage)
 
 ## 🛠️ Development
 
