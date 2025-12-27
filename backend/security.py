@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from settings import get_settings
 
 ALGORITHM = "HS256"
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 def _get_secret_key() -> str:

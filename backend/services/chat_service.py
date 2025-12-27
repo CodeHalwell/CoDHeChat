@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Iterable, Protocol
+from typing import AsyncIterator, Protocol
 
 from openai import AsyncOpenAI
 
@@ -8,10 +8,29 @@ from settings import Settings
 
 
 class ChatClient(Protocol):
+    """
+    Protocol defining the interface for chat completion clients.
+    
+    Implementations should connect to a language model or chat service and stream
+    the generated response in chunks, yielding each chunk as it becomes available.
+    """
+    
     async def stream_chat_completion(
         self, messages: list[dict[str, str]]
     ) -> AsyncIterator[str]:
-        """Stream completion chunks for the provided conversation."""
+        """
+        Asynchronously stream completion chunks for the provided conversation history.
+
+        Args:
+            messages (list[dict[str, str]]): A list of message objects representing the conversation history.
+                Each message should be a dictionary with at least "role" and "content" keys.
+
+        Yields:
+            str: The next chunk of the generated completion as a string.
+
+        Returns:
+            AsyncIterator[str]: An asynchronous iterator yielding completion chunks as strings.
+        """
 
 
 class OpenAIChatClient:

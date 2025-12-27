@@ -18,22 +18,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError
+from openai import APIError, APITimeoutError, RateLimitError
+from pydantic import ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import crud
-import models
 import schemas
 from database import Base, get_db, get_engine, get_session_factory
+from logging_config import configure_logging
 from schemas import ChatResponse
 from security import create_access_token, decode_access_token, verify_password
 from services.chat_service import ChatService, build_chat_service
 from settings import get_settings
-from logging_config import configure_logging
-from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +247,7 @@ async def chat_completion(
     chat_service: ChatService = Depends(get_chat_service_dependency),
 ):
     conversation = _ensure_conversation(db, current_user.id, chat_request)
-    user_message = crud.create_message(
+    crud.create_message(
         db,
         conversation_id=conversation.id,
         role="user",
@@ -278,7 +280,7 @@ def health_check(request: Request, db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         checks.append(schemas.HealthComponent(component="database", status="ok"))
-    except Exception as exc:  # noqa: BLE001
+    except SQLAlchemyError as exc:
         logger.exception("Database health check failed")
         checks.append(
             schemas.HealthComponent(
@@ -322,7 +324,13 @@ def _ensure_conversation(
             raise HTTPException(status_code=404, detail="Conversation not found")
         return conversation
 
-    title = chat_request.message[:60] or "Conversation"
+    if chat_request.message:
+        if len(chat_request.message) > 60:
+            title = chat_request.message[:57] + "..."
+        else:
+            title = chat_request.message
+    else:
+        title = "Conversation"
     return crud.create_user_conversation(
         db,
         conversation=schemas.ConversationBase(name=title),
@@ -345,93 +353,99 @@ async def websocket_endpoint(websocket: WebSocket):
     db = session_factory()
 
     try:
-        payload = decode_access_token(token)
-        username = payload.get("sub")
-        if not username:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user = crud.get_user_by_username(db, username=username)
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-    except JWTError:
-        await websocket.close(code=1008, reason="Invalid token")
-        db.close()
-        await connection_limiter.release()
-        return
+        try:
+            payload = decode_access_token(token)
+            username = payload.get("sub")
+            if not username:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            user = crud.get_user_by_username(db, username=username)
+            if not user:
+                raise HTTPException(status_code=401, detail="User not found")
+        except JWTError:
+            await websocket.close(code=1008, reason="Invalid token")
+            return
 
-    chat_service: ChatService | None = getattr(websocket.app.state, "chat_service", None)
-    if not chat_service:
-        await websocket.close(code=1013, reason="Chat service unavailable")
-        db.close()
-        await connection_limiter.release()
-        return
+        chat_service: ChatService | None = getattr(websocket.app.state, "chat_service", None)
+        if not chat_service:
+            await websocket.close(code=1013, reason="Chat service unavailable")
+            return
 
-    try:
-        while True:
-            raw_payload = await websocket.receive_json()
-            try:
-                request_model = schemas.ChatStreamRequest.model_validate(raw_payload)
-            except Exception as exc:  # noqa: BLE001
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "detail": "Invalid payload",
-                        "errors": str(exc),
-                    }
-                )
-                continue
-
-            conversation = _ensure_conversation(db, user.id, request_model)
-            crud.create_message(
-                db,
-                conversation_id=conversation.id,
-                role="user",
-                content=request_model.message,
-            )
-
-            history_records = crud.list_conversation_history(db, conversation.id)
-            history_payload = [
-                {"role": record.role, "content": record.content}
-                for record in history_records
-            ]
-
-            reply_accumulator = ""
-            try:
-                async for chunk in chat_service.stream_reply(history_payload):
-                    reply_accumulator += chunk
+        try:
+            while True:
+                raw_payload = await websocket.receive_json()
+                try:
+                    request_model = schemas.ChatStreamRequest.model_validate(raw_payload)
+                except ValidationError:
                     await websocket.send_json(
                         {
-                            "type": "chunk",
-                            "requestId": request_model.request_id,
-                            "conversationId": conversation.id,
-                            "content": reply_accumulator,
+                            "type": "error",
+                            "detail": "Invalid payload format",
                         }
                     )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Error while streaming response: %s", exc)
+                    continue
+
+                conversation = _ensure_conversation(db, user.id, request_model)
+                crud.create_message(
+                    db,
+                    conversation_id=conversation.id,
+                    role="user",
+                    content=request_model.message,
+                )
+
+                history_records = crud.list_conversation_history(db, conversation.id)
+                history_payload = [
+                    {"role": record.role, "content": record.content}
+                    for record in history_records
+                ]
+
+                reply_accumulator = ""
+                try:
+                    async for chunk in chat_service.stream_reply(history_payload):
+                        reply_accumulator += chunk
+                        await websocket.send_json(
+                            {
+                                "type": "chunk",
+                                "requestId": request_model.request_id,
+                                "conversationId": conversation.id,
+                                "content": reply_accumulator,
+                            }
+                        )
+                except (APIError, APITimeoutError, RateLimitError) as exc:
+                    logger.exception("Chat service error while streaming: %s", exc)
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "requestId": request_model.request_id,
+                            "detail": "Failed to generate response",
+                        }
+                    )
+                    continue
+                except Exception as exc:
+                    logger.exception("Unexpected error while streaming response: %s", exc)
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "requestId": request_model.request_id,
+                            "detail": "Failed to generate response",
+                        }
+                    )
+                    continue
+
+                crud.create_message(
+                    db,
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content=reply_accumulator,
+                )
                 await websocket.send_json(
                     {
-                        "type": "error",
+                        "type": "complete",
                         "requestId": request_model.request_id,
-                        "detail": "Failed to generate response",
+                        "conversationId": conversation.id,
                     }
                 )
-                continue
-
-            crud.create_message(
-                db,
-                conversation_id=conversation.id,
-                role="assistant",
-                content=reply_accumulator,
-            )
-            await websocket.send_json(
-                {
-                    "type": "complete",
-                    "requestId": request_model.request_id,
-                    "conversationId": conversation.id,
-                }
-            )
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected: %s", websocket.client)
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected: %s", websocket.client)
     finally:
         db.close()
         await connection_limiter.release()

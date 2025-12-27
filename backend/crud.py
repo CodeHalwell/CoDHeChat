@@ -1,10 +1,10 @@
+from uuid import uuid4
+
 from sqlalchemy.orm import Session
 
 import models
 import schemas
 from security import get_password_hash
-from uuid import uuid4
-import secrets
 
 def get_user(db: Session, user_id: int):
     return db.query(models.User).filter(models.User.id == user_id).first()
@@ -26,8 +26,8 @@ def create_user(db: Session, user: schemas.UserCreate):
 
 def create_guest_user(db: Session) -> models.User:
     username = f"guest-{uuid4().hex[:8]}"
-    password = secrets.token_urlsafe(8)
-    hashed_password = get_password_hash(password)
+    # Guest users do not have a usable password; use a sentinel value.
+    hashed_password = get_password_hash("guest")
     user = models.User(username=username, hashed_password=hashed_password)
     db.add(user)
     db.commit()

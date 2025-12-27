@@ -12,7 +12,7 @@ This document explains **why** every major feature in CoDHeChat exists and how i
 
 ## 2. Configuration & Secrets
 
-* **Typed settings (`backend/settings.py`)** – Pydantic validates env vars (database URL, OpenAI keys, log level) before the app starts, so configuration bugs fail fast instead of at runtime.
+* **Typed settings (`backend/settings.py`)** – Pydantic validates environment variables (database URL, OpenAI keys, log level) before the app starts, so configuration bugs fail fast instead of during runtime.
 * **`.env.example`** – Documents every required variable, including logging toggles. Teams can copy it to `.env` for local dev or map it to secrets managers in production.
 * **Guest authentication (`/auth/guest`)** – Offers a secure default auth flow that still works during demos. Guest tokens are short-lived JWTs signed with `SECRET_KEY`.
 

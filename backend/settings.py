@@ -35,7 +35,9 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_database_url(self) -> str:
         """Return the sync SQLAlchemy URL (convert async SQLite URLs)."""
-
+        # Convert async SQLite URLs (sqlite+aiosqlite://) to sync (sqlite://)
+        if self.database_url.startswith("sqlite+aiosqlite://"):
+            return "sqlite://" + self.database_url[len("sqlite+aiosqlite://"):]
         return self.database_url
 
     @property

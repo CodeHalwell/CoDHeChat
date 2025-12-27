@@ -12,7 +12,7 @@ TEST_DB_PATH = pathlib.Path(__file__).resolve().parent.parent / "test.db"
 
 
 class FakeChatService:
-    async def stream_reply(self, history):  # pragma: no cover - trivial
+    async def stream_reply(self, history):
         for chunk in ["Hello", " world!"]:
             yield chunk
 
