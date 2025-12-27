@@ -45,4 +45,6 @@ def configure_logging(settings: Settings) -> None:
 
     config = build_logging_config(settings)
     logging.config.dictConfig(config)
-    logging.getLogger(__name__).debug("Logging configured", extra={"config": config})
+    logger = logging.getLogger(__name__)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Logging configured", extra={"config": config})

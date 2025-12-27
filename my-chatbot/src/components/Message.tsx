@@ -53,7 +53,7 @@ const Message: React.FC<MessageProps> = ({ message }) => {
                         <ReactMarkdown
                             rehypePlugins={[rehypeSanitize]}
                             components={{
-                                code({ node, inline, className, children, ...props }) {
+                                code({ inline, className, children, ...props }) {
                                     const match = /language-(\w+)/.exec(className || '');
                                     const codeText = String(children).replace(/\n$/, '');
                                     if (!inline && match) {

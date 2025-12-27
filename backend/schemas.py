@@ -60,9 +60,10 @@ class ChatRequest(BaseModel):
     conversation_id: int | None = None
     message: str
 
-    _validate_message = field_validator("message")(
-        lambda v: _validate_text(v, "message")
-    )
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, v):
+        return _validate_text(v, "message")
 
 
 class ChatResponse(BaseModel):

@@ -24,7 +24,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     });
 
     if (!response.ok) {
-        const detail = await response.text();
+        let detail: string;
+        try {
+            detail = await response.text();
+        } catch (e) {
+            detail = '';
+        }
         throw new Error(detail || 'Request failed');
     }
 

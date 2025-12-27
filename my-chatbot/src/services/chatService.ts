@@ -120,6 +120,9 @@ class WebSocketManager {
                 return;
             }
             const requestId: string = data.requestId || data.request_id;
+            if (!requestId) {
+                return;
+            }
             const resolver = this.messageResolvers.get(requestId);
             if (!resolver) {
                 return;
